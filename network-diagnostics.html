@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simple Web App</title>
+  <title>Network Diagnostics</title>
+  <!-- ======================= STYLES ======================= -->
   <style>
+    /* Page layout: centered column that fills the viewport */
     body {
       font-family: -apple-system, system-ui, sans-serif;
       display: flex;
@@ -16,6 +18,8 @@
       background: #f0f2f5;
     }
     h1 { color: #333; }
+
+    /* Primary (blue) button style, also used as the default for buttons */
     button {
       padding: 12px 24px;
       font-size: 16px;
@@ -27,11 +31,15 @@
       transition: background 0.2s;
     }
     button:hover { background: #357abd; }
+
+    /* Message paragraph shown below the button (counter feedback) */
     #message {
       margin-top: 20px;
       font-size: 18px;
       color: #2e7d32;
     }
+
+    /* Diagnostics panel: dark "terminal" card */
     #netinfo {
       margin-top: 30px;
       width: min(640px, 92vw);
@@ -46,8 +54,10 @@
     #netinfo h2 {
       margin: 0 0 10px;
       font-size: 16px;
-      color: #8be9fd;
+      color: #8be9fd; /* cyan terminal heading */
     }
+
+    /* Each diagnostics row: a fixed-width label on the left, value on the right */
     #netinfo .row {
       display: flex;
       gap: 8px;
@@ -55,12 +65,16 @@
       word-break: break-all;
     }
     #netinfo .label {
-      color: #f1fa8c;
+      color: #f1fa8c; /* yellow labels */
       min-width: 150px;
       flex-shrink: 0;
     }
+
+    /* Semantic result colors: green = OK, red = failure */
     #netinfo .ok { color: #50fa7b; }
     #netinfo .bad { color: #ff5555; }
+
+    /* Secondary (muted blue) style for the panel's refresh button */
     #netinfo button {
       margin-top: 12px;
       padding: 8px 16px;
@@ -71,10 +85,12 @@
   </style>
 </head>
 <body>
+  <!-- Click-counter demo: button + message that updates on each click -->
   <h1>Hello, Web App!</h1>
   <button id="clickBtn">Click Me</button>
   <p id="message"></p>
 
+  <!-- Network diagnostics panel: rows are filled in by the script below -->
   <div id="netinfo">
     <h2>&gt;_ Network Diagnostics</h2>
     <div id="netrows"></div>
@@ -82,6 +98,9 @@
   </div>
 
   <script>
+    // ================= CLICK COUNTER =================
+    // Tracks how many times the button has been clicked and
+    // colors the feedback message with a random hue each time.
     let count = 0;
     document.getElementById('clickBtn').addEventListener('click', () => {
       count++;
@@ -92,8 +111,14 @@
       document.getElementById('message').style.color = randomColor;
     });
 
-    // ---------- Network diagnostics (for network engineers) ----------
+    // ================= NETWORK DIAGNOSTICS =================
+    // Populates #netrows with key/value rows describing the network
+    // environment: local connection state, public IP + ISP/geo,
+    // DNS resolution, HTTP round-trip, and page-load timings.
     const rows = document.getElementById('netrows');
+
+    // Helper: create one diagnostics row (label + value, optional CSS class
+    // for coloring, e.g. 'ok' for success or 'bad' for failure).
     const line = (label, value, cls) => {
       const d = document.createElement('div');
       d.className = 'row';
@@ -101,6 +126,8 @@
       rows.appendChild(d);
       return d;
     };
+
+    // Helper: format an elapsed time since t0 as a green "X ms" badge.
     const status = (label, t0) => {
       const ms = (performance.now() - t0).toFixed(1);
       return `<span class="ok">${ms} ms</span>`;
@@ -108,19 +135,21 @@
 
     const runDiagnostics = async () => {
       rows.innerHTML = '';
+
+      // --- Local / basic connection info ---
       line('Local host (browser)', location.hostname || '(file:// — no host)');
       line('Protocol / port', `${location.protocol}//${location.port || (location.protocol === 'https:' ? '443' : '80')}`);
       line('Online status', navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'ok' : 'bad');
 
-      // Effective connection metrics (Chromium/Edge)
+      // Effective connection metrics (Network Information API, Chromium/Edge only)
       const c = navigator.connection || {};
       if (c.effectiveType) {
-        line('Effective type', c.effectiveType);
+        line('Effective type', c.effectiveType);              // e.g. '4g', '3g'
         line('Downlink / RTT', `${c.downlink ?? '?'} Mbps / ${c.rtt ?? '?'} ms`);
         line('Save-Data', c.saveData ? 'on' : 'off');
       }
 
-      // Public IP (source) + latency
+      // --- Public source IP + time to resolve it ---
       let t0 = performance.now();
       try {
         const r = await fetch('https://api.ipify.org?format=json');
@@ -130,7 +159,7 @@
         line('Public IP (source)', 'unreachable: ' + e.message, 'bad');
       }
 
-      // ISP / geo info for the public IP
+      // --- ISP / geo details for the public IP (ip-api.com) ---
       t0 = performance.now();
       try {
         const r = await fetch('https://ip-api.com/json/?fields=isp,org,as,city,country,query');
@@ -143,10 +172,11 @@
         line('ISP / Org', 'unreachable: ' + e.message, 'bad');
       }
 
-      // Remote server IP (destination) via DNS-over-HTTPS
+      // --- DNS resolution (destination) via DNS-over-HTTPS (dns.google) ---
+      // Resolves the site we're on (if served from a host) and dns.google itself.
       const targets = [['This site', location.hostname], ['dns.google', 'dns.google']];
       for (const [name, host] of targets) {
-        if (!host) continue;
+        if (!host) continue; // skip when opened via file:// (no hostname)
         t0 = performance.now();
         try {
           const r = await fetch(
@@ -154,6 +184,7 @@
             { headers: { accept: 'application/dns-json' } }
           );
           const j = await r.json();
+          // Keep only A records (type 1) and join their IPs
           const addrs = (j.Answer || []).filter(a => a.type === 1).map(a => a.data).join(', ');
           line(`DNS A: ${name}`, addrs || j.Status, j.Status === 0 ? 'ok' : 'bad');
           line(`DNS latency: ${name}`, status('', t0));
@@ -162,7 +193,7 @@
         }
       }
 
-      // TCP+TLS+HTTP round trip to this origin (same-origin fetch)
+      // --- Full TCP+TLS+HTTP round trip to this origin (same-origin HEAD request) ---
       try {
         t0 = performance.now();
         const r = await fetch(location.href, { method: 'HEAD', cache: 'no-store' });
@@ -171,7 +202,8 @@
         line('HTTP round-trip (HEAD)', 'failed: ' + e.message, 'bad');
       }
 
-      // Page load timings (Navigation Timing Level 2)
+      // --- Page load timings (Navigation Timing Level 2) ---
+      // Breaks down how this page itself was loaded: DNS, connect, TTFB, size.
       const nav = performance.getEntriesByType('navigation')[0];
       if (nav) {
         line('DNS lookup (this page)', `${(nav.domainLookupEnd - nav.domainLookupStart).toFixed(1)} ms`);
@@ -181,10 +213,13 @@
         line('TLS cipher', nav.secureConnectionStart > 0 ? 'TLS in use' : 'no TLS');
       }
 
+      // --- Client environment info ---
       line('User agent', navigator.userAgent.split(') ').pop());
       line('Timezone / offset', `${Intl.DateTimeFormat().resolvedOptions().timeZone} (UTC${-new Date().getTimezoneOffset()/60})`);
     };
 
+    // Start: run diagnostics on load, allow manual re-runs, and note
+    // connectivity changes (online/offline events) in the panel.
     document.getElementById('refreshBtn').addEventListener('click', runDiagnostics);
     window.addEventListener('online', () => line('Connection restored', new Date().toLocaleTimeString(), 'ok'));
     window.addEventListener('offline', () => line('Connection lost', new Date().toLocaleTimeString(), 'bad'));
